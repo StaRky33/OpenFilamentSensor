@@ -500,10 +500,26 @@ void WebServer::loop()
 {
     ElegantOTA.loop();
     unsigned long now = millis();
+
+    // Periodic web server diagnostics (every 30s)
+    static unsigned long lastDiagMs = 0;
+    if (now - lastDiagMs >= 30000)
+    {
+        lastDiagMs = now;
+        logger.logf("WebServer diag: SSE clients=%d, heap=%u, minHeap=%u",
+                     statusEvents.count(), ESP.getFreeHeap(), ESP.getMinFreeHeap());
+    }
+
     if (statusEvents.count() > 0 && now - lastStatusBroadcastMs >= statusBroadcastIntervalMs)
     {
         lastStatusBroadcastMs = now;
+        unsigned long t0 = millis();
         broadcastStatusUpdate();
+        unsigned long elapsed = millis() - t0;
+        if (elapsed > 100)
+        {
+            logger.logf("WARNING: SSE broadcast took %lu ms", elapsed);
+        }
     }
 }
 
