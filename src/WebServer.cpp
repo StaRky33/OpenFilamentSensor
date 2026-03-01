@@ -143,8 +143,23 @@ void WebServer::begin()
         kRouteUpdateSettings,
         [this](AsyncWebServerRequest *request, JsonVariant &json)
         {
+            bool alreadyPending = false;
             portENTER_CRITICAL(&pendingMutex);
-            bool alreadyPending = pendingSettingsUpdate;
+            if (pendingSettingsUpdate)
+            {
+                alreadyPending = true;
+            }
+            else
+            {
+                pendingSettingsDoc.clear();
+                JsonObject src = json.as<JsonObject>();
+                JsonObject dst = pendingSettingsDoc.to<JsonObject>();
+                for (JsonPair kv : src)
+                {
+                    dst[kv.key()] = kv.value();
+                }
+                pendingSettingsUpdate = true;
+            }
             portEXIT_CRITICAL(&pendingMutex);
 
             if (alreadyPending)
@@ -153,17 +168,6 @@ void WebServer::begin()
                               "{\"error\":\"Settings update already pending\"}");
                 return;
             }
-
-            portENTER_CRITICAL(&pendingMutex);
-            pendingSettingsDoc.clear();
-            JsonObject src = json.as<JsonObject>();
-            JsonObject dst = pendingSettingsDoc.to<JsonObject>();
-            for (JsonPair kv : src)
-            {
-                dst[kv.key()] = kv.value();
-            }
-            pendingSettingsUpdate = true;
-            portEXIT_CRITICAL(&pendingMutex);
 
             request->send(200, "application/json", "{\"status\":\"ok\"}");
         }));
@@ -236,10 +240,9 @@ void WebServer::begin()
     statusEvents.onConnect([this](AsyncEventSourceClient *client) {
         if (statusEvents.count() > kMaxSSEClients)
         {
-            // Over limit - the library already added the client, so we
-            // just won't send data and it will be cleaned up on next sweep.
-            logger.logf("SSE client rejected (count=%d, max=%d)",
+            logger.logf("SSE client rejected: closing excess client (count=%d, max=%d)",
                         statusEvents.count(), kMaxSSEClients);
+            client->close();
             return;
         }
         client->send("connected", "init", millis(), 1000);
@@ -523,7 +526,15 @@ void WebServer::processPendingCommands()
         if (jsonObj.containsKey("detection_grace_period_ms"))
             settingsManager.setDetectionGracePeriodMs(jsonObj["detection_grace_period_ms"].as<int>());
         if (jsonObj.containsKey("detection_ratio_threshold"))
-            settingsManager.setDetectionRatioThreshold(jsonObj["detection_ratio_threshold"].as<int>());
+        {
+            float threshold = jsonObj["detection_ratio_threshold"].as<float>();
+            // Accept legacy 0.0-1.0 ratio payloads as well as 0-100 percent.
+            if (threshold > 0.0f && threshold <= 1.0f)
+            {
+                threshold *= 100.0f;
+            }
+            settingsManager.setDetectionRatioThreshold(static_cast<int>(threshold + 0.5f));
+        }
         if (jsonObj.containsKey("detection_hard_jam_mm"))
             settingsManager.setDetectionHardJamMm(jsonObj["detection_hard_jam_mm"].as<float>());
         if (jsonObj.containsKey("detection_soft_jam_time_ms"))

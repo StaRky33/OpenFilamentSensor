@@ -43,6 +43,7 @@ test/nul
 /test/test_settings_manager
 /test/test_logger
 /test/test_integration
+/test/tsan_output.txt
 
 # Logs
 logs
